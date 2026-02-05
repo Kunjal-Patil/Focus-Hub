@@ -1,12 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useFocusTimer from '../hooks/useFocusTimer';
 import FocusPlant from './FocusPlant';
-import SoundPlayer from './SoundPlayer'; // <--- IMPORTED HERE
+import SoundPlayer from './SoundPlayer';
 
 const FocusRoom = ({ roomId, userId, username }) => {
   const token = localStorage.getItem("token");
-  const wsUrl = `ws://127.0.0.1:8000/ws/${roomId}?token=${token}`;
+
+  // --- PRODUCTION URL CONFIGURATION ---
+  // We use your Render backend URL here.
+  // The logic automatically switches between 'ws://' (local) and 'wss://' (production security).
+  const API_DOMAIN = "focus-hub-rrsm.onrender.com";
+  const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+  const wsUrl = `${protocol}${API_DOMAIN}/ws/${roomId}?token=${token}`;
   
+  // Base URL for normal HTTP requests (like fetching flowers)
+  const HTTP_URL = `https://${API_DOMAIN}`; 
+
   const { 
     timeLeft, isRunning, startTimer, sendFail, sendRejoin, sendChat,
     status, activeUsers, chatMessages 
@@ -26,11 +35,11 @@ const FocusRoom = ({ roomId, userId, username }) => {
 
   // 1. Fetch score
   useEffect(() => {
-    fetch(`http://127.0.0.1:8000/user/${userId}`)
+    fetch(`${HTTP_URL}/user/${userId}`)
       .then(res => res.json())
       .then(data => setTotalFlowers(data.flowers))
       .catch(err => console.error("DB Error:", err));
-  }, [userId]);
+  }, [userId, HTTP_URL]);
 
   // 2. Strict Mode Logic
   useEffect(() => {
@@ -43,7 +52,7 @@ const FocusRoom = ({ roomId, userId, username }) => {
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [isRunning, strictModeFailed]);
+  }, [isRunning, strictModeFailed, sendFail]);
 
   // 3. Track Start
   useEffect(() => {
@@ -71,8 +80,8 @@ const FocusRoom = ({ roomId, userId, username }) => {
       const token = localStorage.getItem("token");
       const headers = token ? { "Authorization": `Bearer ${token}` } : {};
       try {
-        await fetch(`http://127.0.0.1:8000/user/${userId}/claim-reward`, { method: 'POST', headers });
-        const res = await fetch(`http://127.0.0.1:8000/user/${userId}`, { headers });
+        await fetch(`${HTTP_URL}/user/${userId}/claim-reward`, { method: 'POST', headers });
+        const res = await fetch(`${HTTP_URL}/user/${userId}`, { headers });
         const data = await res.json();
         setTotalFlowers(data.flowers);
         setSessionCompleted(false);

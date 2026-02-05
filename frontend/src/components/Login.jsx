@@ -6,6 +6,9 @@ const Login = ({ onLogin }) => {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
+  // PRODUCTION BACKEND URL
+  const API_URL = "https://focus-hub-rrsm.onrender.com";
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -16,8 +19,8 @@ const Login = ({ onLogin }) => {
     formData.append("password", password);
 
     const url = isRegistering 
-      ? "http://127.0.0.1:8000/register" 
-      : "http://127.0.0.1:8000/token";
+      ? `${API_URL}/register`
+      : `${API_URL}/token`;
 
     try {
       const response = await fetch(url, {
