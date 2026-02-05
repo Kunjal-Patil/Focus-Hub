@@ -28,10 +28,14 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 app = FastAPI()
 
-# UPDATE THIS FOR PRODUCTION
+# --- CORS CONFIGURATION (THE FIX) ---
+# We explicitly list all the domains that are allowed to talk to your backend.
 origins = [
     "http://localhost:5173",
-    "http://127.0.0.1:5173"
+    "http://127.0.0.1:5173",
+    "https://focushub-nu.vercel.app",                    # Your main Vercel URL
+    "https://focus-w1nkml4fy-kunjals-projects-d6c9ec8c.vercel.app", # Your Preview URL (from screenshot)
+    os.getenv("FRONTEND_URL")                              # Allows adding more via Render Dashboard
 ]
 
 app.add_middleware(
