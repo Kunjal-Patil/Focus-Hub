@@ -1,0 +1,29 @@
+# --- General ---
+.DS_Store
+.vscode/
+.idea/
+
+# --- Python Backend ---
+backend/venv/
+backend/.venv/
+backend/__pycache__/
+backend/*.pyc
+backend/db.sqlite3
+backend/.env
+
+# --- React Frontend ---
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.env
+frontend/.env.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# --- Environment Variables (CRITICAL) ---
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
