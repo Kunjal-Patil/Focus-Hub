@@ -30,7 +30,7 @@ origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "https://focushub-nu.vercel.app",
-    "https://focus-w1nkml4fy-kunjals-projects-d6c9ec8c.vercel.app",
+    "https://focus-bitmcavx9-kunjals-projects-d6c9ec8c.vercel.app",
     os.getenv("FRONTEND_URL")
 ]
 
