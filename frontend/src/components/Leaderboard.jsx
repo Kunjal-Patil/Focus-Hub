@@ -4,8 +4,12 @@ const Leaderboard = ({ onBack }) => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // --- CONFIGURATION ---
+  // const API_URL = "http://127.0.0.1:8000";             // UNCOMMENT FOR LOCAL
+  const API_URL = "https://focus-hub-rrsm.onrender.com";  // UNCOMMENT FOR PRODUCTION
+
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/leaderboard")
+    fetch(`${API_URL}/leaderboard`)
       .then(res => res.json())
       .then(data => {
         setUsers(data);

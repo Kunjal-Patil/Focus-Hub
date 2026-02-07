@@ -7,7 +7,8 @@ const Login = ({ onLogin }) => {
   const [error, setError] = useState("");
 
   // PRODUCTION BACKEND URL
-  const API_URL = "https://focus-hub-rrsm.onrender.com";
+  const API_URL = "https://focus-hub-rrsm.onrender.com"; // <--- COMMENT THIS OUT FOR LOCAL TESTING
+  // const API_URL = "http://127.0.0.1:8000";                 // <--- UNCOMMENT THIS FOR LOCAL TESTING
 
   const handleSubmit = async (e) => {
     e.preventDefault();

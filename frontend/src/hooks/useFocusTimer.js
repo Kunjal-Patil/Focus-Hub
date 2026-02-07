@@ -5,8 +5,10 @@ const useFocusTimer = (websocketUrl) => {
   const [isRunning, setIsRunning] = useState(false);
   const [status, setStatus] = useState("Connecting...");
   const [activeUsers, setActiveUsers] = useState([]);
-  const [chatMessages, setChatMessages] = useState([]); // NEW: Chat history
+  const [chatMessages, setChatMessages] = useState([]); 
   
+  const [totalDuration, setTotalDuration] = useState(0);
+
   const targetTimeRef = useRef(null);
   const socketRef = useRef(null);
 
@@ -24,6 +26,11 @@ const useFocusTimer = (websocketUrl) => {
       
       if (data.type === "TIMER_STARTED" || data.type === "SYNC_TIMER") {
         targetTimeRef.current = data.end_time;
+        
+        if (data.duration) {
+            setTotalDuration(data.duration * 60);
+        }
+        
         setIsRunning(true);
       }
       
@@ -31,7 +38,6 @@ const useFocusTimer = (websocketUrl) => {
         setActiveUsers(data.users);
       }
 
-      // NEW: Handle incoming chat
       if (data.type === "CHAT") {
         setChatMessages((prev) => [...prev, data]);
       }
@@ -86,14 +92,13 @@ const useFocusTimer = (websocketUrl) => {
     }
   };
 
-  // NEW: Send Chat
   const sendChat = (message) => {
     if (socketRef.current?.readyState === 1) {
       socketRef.current.send(JSON.stringify({ action: "CHAT", message: message }));
     }
   };
 
-  return { timeLeft, isRunning, startTimer, sendFail, sendRejoin, sendChat, status, activeUsers, chatMessages };
+  return { timeLeft, isRunning, startTimer, sendFail, sendRejoin, sendChat, status, activeUsers, chatMessages, totalDuration };
 };
 
 export default useFocusTimer;

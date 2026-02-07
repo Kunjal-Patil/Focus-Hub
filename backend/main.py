@@ -15,10 +15,8 @@ from dotenv import load_dotenv
 from database import engine, Base, get_db
 from models import User
 
-# --- SECURITY CONFIG ---
-load_dotenv() # Load environment variables from .env file
+load_dotenv()
 
-# Fallback to hardcoded key if .env fails (for local dev only)
 SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 3000
@@ -28,14 +26,12 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 app = FastAPI()
 
-# --- CORS CONFIGURATION (THE FIX) ---
-# We explicitly list all the domains that are allowed to talk to your backend.
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "https://focushub-nu.vercel.app",                    # Your main Vercel URL
-    "https://focus-w1nkml4fy-kunjals-projects-d6c9ec8c.vercel.app", # Your Preview URL (from screenshot)
-    os.getenv("FRONTEND_URL")                              # Allows adding more via Render Dashboard
+    "https://focushub-nu.vercel.app",
+    "https://focus-w1nkml4fy-kunjals-projects-d6c9ec8c.vercel.app",
+    os.getenv("FRONTEND_URL")
 ]
 
 app.add_middleware(
@@ -51,7 +47,7 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-# --- AUTH HELPERS ---
+# AUTH HELPERS
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -79,7 +75,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
-# --- ENDPOINTS ---
+# ENDPOINTS
 @app.post("/register")
 async def register(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).filter(User.username == form_data.username))
@@ -98,23 +94,12 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     
-    # SECURITY UPGRADE: Include 'id' in the token so WebSocket doesn't need to ask DB
     access_token = create_access_token(data={"sub": user.username, "id": user.id})
-    
     return {"access_token": access_token, "token_type": "bearer", "username": user.username, "user_id": user.id}
 
 @app.get("/users/me")
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return {"username": current_user.username, "flowers": current_user.flowers_grown, "id": current_user.id}
-
-@app.post("/user/{user_id}/claim-reward")
-async def claim_reward(user_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).filter(User.id == int(user_id)))
-    user = result.scalars().first()
-    if user:
-        user.flowers_grown += 1
-        await db.commit()
-    return {"status": "success"}
 
 @app.get("/user/{user_id}")
 async def get_user_stats(user_id: str, db: AsyncSession = Depends(get_db)):
@@ -130,29 +115,45 @@ async def get_leaderboard(db: AsyncSession = Depends(get_db)):
     return [{"username": u.username, "flowers": u.flowers_grown} for u in users]
 
 
-# --- WEBSOCKETS (SECURE TOKEN AUTH) ---
+# WEBSOCKETS & STATE
 room_states = {} 
+# Persistent storage: { room_id: { user_id: first_join_timestamp } }
+room_attendance = {} 
 
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, List[Dict]] = {}
 
-    async def connect(self, websocket: WebSocket, room_id: str, username: str):
+    async def connect(self, websocket: WebSocket, room_id: str, username: str, user_id: int):
         await websocket.accept()
         if room_id not in self.active_connections:
             self.active_connections[room_id] = []
         
-        # Remove old connection
+        # Remove old connection instance for this user
         self.active_connections[room_id] = [c for c in self.active_connections[room_id] if c['username'] != username]
-
+        
+        current_time = time.time()
         initial_status = "idle"
+
+        # ATTENDANCE LOGIC:
+        # If session is active, check if user was already here.
+        # If yes, keep old time (prevents refresh bug).
+        # If no, set new time (late joiner).
         if room_id in room_states and room_states[room_id]["is_active"]:
-             initial_status = "focusing"
+            initial_status = "focusing"
+            if room_id not in room_attendance: room_attendance[room_id] = {}
+            if user_id not in room_attendance[room_id]:
+                room_attendance[room_id][user_id] = current_time
+        else:
+            # If idle, set time, but it will be reset on START_TIMER
+            if room_id not in room_attendance: room_attendance[room_id] = {}
+            room_attendance[room_id][user_id] = current_time
 
         self.active_connections[room_id].append({
             "ws": websocket, 
             "username": username,
-            "status": initial_status 
+            "user_id": user_id, 
+            "status": initial_status,
         })
         await self.broadcast_user_list(room_id)
 
@@ -185,31 +186,71 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# SECURITY UPGRADE: Removed {user_id}/{username} from URL. Added 'token' query param.
+# REWARD CLAIM WITH PERSISTENT ATTENDANCE CHECK
+@app.post("/user/{user_id}/claim-reward")
+async def claim_reward(
+    user_id: str, 
+    room_id: str = Query(...), 
+    db: AsyncSession = Depends(get_db)
+):
+    state = room_states.get(room_id)
+    if not state:
+        raise HTTPException(status_code=400, detail="No active session found.")
+
+    user_id_int = int(user_id)
+    # Check if user has an attendance record
+    if room_id not in room_attendance or user_id_int not in room_attendance[room_id]:
+         raise HTTPException(status_code=403, detail="User not found in session records.")
+
+    # Calculate time based on ORIGINAL join time
+    join_time = room_attendance[room_id][user_id_int]
+    present_seconds = time.time() - join_time
+    required_seconds = (state["duration"] * 0.9) * 60 
+
+    # Debug print
+    print(f"User {user_id}: Present {present_seconds:.2f}s, Required {required_seconds:.2f}s")
+
+    if present_seconds < required_seconds:
+        minutes_present = round(present_seconds / 60, 2)
+        minutes_required = round(required_seconds / 60, 2)
+        
+        error_detail = json.dumps({
+            "error_code": "LOW_ATTENDANCE",
+            "present": minutes_present,
+            "required": minutes_required,
+            "percentage": int((present_seconds / (state["duration"] * 60)) * 100)
+        })
+        raise HTTPException(status_code=403, detail=error_detail)
+
+    result = await db.execute(select(User).filter(User.id == user_id_int))
+    user = result.scalars().first()
+    if user:
+        user.flowers_grown += 1
+        await db.commit()
+    return {"status": "success"}
+
+
 @app.websocket("/ws/{room_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Query(...)):
-    # 1. VERIFY TOKEN BEFORE ACCEPTING CONNECTION
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
         user_id = payload.get("id")
-        
-        if username is None or user_id is None:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-            
     except JWTError:
-        # Invalid Token -> Reject Connection
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    # 2. Token is valid! Proceed to connect.
-    await manager.connect(websocket, room_id, username)
+    await manager.connect(websocket, room_id, username, user_id)
     
+    # Sync timer for late joiners/refreshers
     if room_id in room_states and room_states[room_id]["is_active"]:
         remaining = room_states[room_id]["end_time"] - time.time()
         if remaining > 0:
-            await websocket.send_text(json.dumps({"type": "SYNC_TIMER", "end_time": room_states[room_id]["end_time"]}))
+            await websocket.send_text(json.dumps({
+                "type": "SYNC_TIMER", 
+                "end_time": room_states[room_id]["end_time"],
+                "duration": room_states[room_id]["duration"] 
+            }))
 
     try:
         while True:
@@ -220,11 +261,27 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
             if action == "START_TIMER":
                 duration = int(data_json.get("duration", 25))
                 end_time = time.time() + (duration * 60)
-                room_states[room_id] = {"end_time": end_time, "is_active": True}
+                
+                room_states[room_id] = {
+                    "start_time": time.time(),
+                    "end_time": end_time,
+                    "duration": duration, 
+                    "is_active": True
+                }
+                
+                # RESET ATTENDANCE: Everyone currently connected starts NOW
+                room_attendance[room_id] = {}
+                current_time = time.time()
                 for conn in manager.active_connections.get(room_id, []):
                     conn["status"] = "focusing"
+                    room_attendance[room_id][conn["user_id"]] = current_time
+                    
                 await manager.broadcast_user_list(room_id)
-                await manager.broadcast({"type": "TIMER_STARTED", "end_time": end_time}, room_id)
+                await manager.broadcast({
+                    "type": "TIMER_STARTED", 
+                    "end_time": end_time, 
+                    "duration": duration 
+                }, room_id)
             
             elif action == "FAIL":
                 await manager.update_status(room_id, username, "failed")

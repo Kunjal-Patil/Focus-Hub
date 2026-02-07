@@ -9,10 +9,15 @@ function App() {
   const [currentRoom, setCurrentRoom] = useState(null);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
+  // --- CONFIGURATION ---
+  // const API_URL = "http://127.0.0.1:8000";             // UNCOMMENT FOR LOCAL
+  const API_URL = "https://focus-hub-rrsm.onrender.com";  // UNCOMMENT FOR PRODUCTION
+
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (token) {
-      fetch("http://127.0.0.1:8000/users/me", {
+      // Updated to use the variable API_URL
+      fetch(`${API_URL}/users/me`, {
         headers: { "Authorization": `Bearer ${token}` }
       })
       .then(res => {

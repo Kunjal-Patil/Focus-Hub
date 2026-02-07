@@ -52,7 +52,7 @@ const Lobby = ({ username, onJoin, onViewLeaderboard }) => {
           <div className="flex-grow border-t border-slate-700"></div>
         </div>
 
-        {/* NEW: Leaderboard Button */}
+        {/* Leaderboard Button */}
         <button 
           onClick={onViewLeaderboard}
           className="w-full py-3 mb-4 rounded-lg font-bold bg-yellow-500 hover:bg-yellow-400 text-white transition flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/20"

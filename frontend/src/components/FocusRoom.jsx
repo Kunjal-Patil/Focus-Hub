@@ -6,19 +6,16 @@ import SoundPlayer from './SoundPlayer';
 const FocusRoom = ({ roomId, userId, username }) => {
   const token = localStorage.getItem("token");
 
-  // --- PRODUCTION URL CONFIGURATION ---
-  // We use your Render backend URL here.
-  // The logic automatically switches between 'ws://' (local) and 'wss://' (production security).
-  const API_DOMAIN = "focus-hub-rrsm.onrender.com";
+  // CONFIGURATION
+  const API_DOMAIN = "focus-hub-rrsm.onrender.com"; // UNCOMMENT FOR PRODUCTION
+  // const API_DOMAIN = "127.0.0.1:8000";                  // UNCOMMENT FOR LOCAL TESTING
   const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
   const wsUrl = `${protocol}${API_DOMAIN}/ws/${roomId}?token=${token}`;
-  
-  // Base URL for normal HTTP requests (like fetching flowers)
-  const HTTP_URL = `https://${API_DOMAIN}`; 
+  const HTTP_URL = `http://${API_DOMAIN}`;     
 
   const { 
     timeLeft, isRunning, startTimer, sendFail, sendRejoin, sendChat,
-    status, activeUsers, chatMessages 
+    status, activeUsers, chatMessages, totalDuration 
   } = useFocusTimer(wsUrl);
   
   const [totalFlowers, setTotalFlowers] = useState(0);
@@ -26,11 +23,12 @@ const FocusRoom = ({ roomId, userId, username }) => {
   const [strictModeFailed, setStrictModeFailed] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   
-  // Chat State
+  // Failure State from Backend
+  const [failStats, setFailStats] = useState(null); 
+  
+  const [selectedTime, setSelectedTime] = useState(25);
   const [chatInput, setChatInput] = useState("");
   const chatEndRef = useRef(null);
-
-  // Battery Saver State
   const [batterySaver, setBatterySaver] = useState(false);
 
   // 1. Fetch score
@@ -41,25 +39,33 @@ const FocusRoom = ({ roomId, userId, username }) => {
       .catch(err => console.error("DB Error:", err));
   }, [userId, HTTP_URL]);
 
-  // 2. Strict Mode Logic
+  // 2. Strict Mode Listener
   useEffect(() => {
     const handleVisibilityChange = () => {
-      // If running AND we haven't already failed...
       if (document.hidden && isRunning && !strictModeFailed) {
         setStrictModeFailed(true);
-        sendFail(); // Tell everyone I failed
+        sendFail(); 
+        
+        // Play fail sound
+        const audio = new Audio('/sounds/fail.mp3'); 
+        audio.volume = 0.5;
+        audio.play().catch(e => {});
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [isRunning, strictModeFailed, sendFail]);
 
-  // 3. Track Start
+  // 3. Reset states on new run
   useEffect(() => {
-    if (isRunning) setHasStarted(true);
+    if (isRunning) {
+        setHasStarted(true);
+        setFailStats(null); 
+        setSessionCompleted(false);
+    }
   }, [isRunning]);
 
-  // 4. Auto-scroll chat
+  // 4. Chat Auto-Scroll
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
@@ -69,22 +75,58 @@ const FocusRoom = ({ roomId, userId, username }) => {
     if (timeLeft === 0 && !isRunning && status === "Connected" && hasStarted) {
         if (!strictModeFailed) {
             setSessionCompleted(true);
+            
+            // Play success sound
+            const audio = new Audio('/sounds/success.mp3');
+            audio.volume = 0.6;
+            audio.play().catch(e => {});
         }
         setHasStarted(false);
-        setBatterySaver(false); // Auto-exit battery saver when done
+        setBatterySaver(false);
     } 
   }, [timeLeft, isRunning, status, strictModeFailed, hasStarted]);
 
-  // Handlers
+  // --- REWARD HANDLER ---
   const handleClaimReward = async () => {
       const token = localStorage.getItem("token");
       const headers = token ? { "Authorization": `Bearer ${token}` } : {};
       try {
-        await fetch(`${HTTP_URL}/user/${userId}/claim-reward`, { method: 'POST', headers });
+        const response = await fetch(`${HTTP_URL}/user/${userId}/claim-reward?room_id=${roomId}`, { 
+            method: 'POST', 
+            headers 
+        });
+        
+        // Handle 403 Failure (Cheating/Attendance)
+        if (response.status === 403) {
+            const errData = await response.json();
+            try {
+                // Parse stats
+                const stats = JSON.parse(errData.detail);
+                setFailStats(stats);
+            } catch (e) {
+                setFailStats({
+                    message: "Verification Failed",
+                    present: 0,
+                    required: 0,
+                    percentage: 0
+                });
+            }
+            setSessionCompleted(false);
+            return;
+        }
+
+        if (!response.ok) {
+            alert("Verification failed"); 
+            return;
+        }
+
+        // Success!
         const res = await fetch(`${HTTP_URL}/user/${userId}`, { headers });
         const data = await res.json();
         setTotalFlowers(data.flowers);
         setSessionCompleted(false);
+        alert("🌻 Reward Claimed!");
+        
       } catch (err) { console.error(err); }
   };
 
@@ -108,10 +150,13 @@ const FocusRoom = ({ roomId, userId, username }) => {
     return 'border-gray-200'; 
   };
 
+  // Safe duration for Plant
+  const safeDuration = totalDuration > 0 ? totalDuration : (selectedTime * 60);
+
   return (
     <div className="flex flex-col gap-4 w-full max-w-4xl mx-auto pb-8">
     
-    {/* --- BATTERY SAVER OVERLAY --- */}
+    {/* Battery Saver */}
     {batterySaver && (
       <div 
         onClick={() => setBatterySaver(false)}
@@ -125,17 +170,15 @@ const FocusRoom = ({ roomId, userId, username }) => {
       </div>
     )}
 
-    {/* MAIN FOCUS CARD */}
+    {/* Main Card */}
     <div className="p-8 flex flex-col items-center justify-center bg-white rounded-xl shadow-2xl border-2 border-gray-100 w-full relative">
       
-      {/* Battery Saver Button */}
       {isRunning && !strictModeFailed && (
           <button 
             onClick={() => setBatterySaver(true)}
             className="absolute top-4 left-4 text-gray-400 hover:text-gray-800 transition flex items-center gap-1 text-xs font-bold"
-            title="Battery Saver Mode"
           >
-            <span>🌙</span> Dark Mode
+            <span>📱</span> Dark Mode
           </button>
       )}
 
@@ -148,7 +191,7 @@ const FocusRoom = ({ roomId, userId, username }) => {
         Room: <span className="bg-gray-100 px-2 py-1 rounded text-blue-600 font-mono">{roomId}</span>
       </h2>
       
-      {/* AVATARS */}
+      {/* Avatars */}
       <div className="w-full mb-6">
         <p className="text-xs font-bold text-gray-400 uppercase mb-2 tracking-wider text-center">Focus Mates ({activeUsers.length})</p>
         <div className="flex justify-center flex-wrap gap-3">
@@ -162,61 +205,112 @@ const FocusRoom = ({ roomId, userId, username }) => {
                    />
                </div>
                <span className="text-[10px] text-gray-500 mt-1 font-bold">{u.username}</span>
-               {u.status === 'failed' && <span className="absolute top-0 right-0 text-lg">🥀</span>}
+               {u.status === 'failed' && <span className="absolute top-0 right-0 text-lg">❌</span>}
             </div>
           ))}
         </div>
       </div>
       
-      {/* TIMER */}
+      {/* Timer */}
       <div className={`text-7xl font-mono font-bold mb-4 tracking-wider ${
         strictModeFailed ? 'text-red-500' : (isRunning ? 'text-slate-800' : 'text-gray-300')
       }`}>
         {formatTime(timeLeft)}
       </div>
 
-      {strictModeFailed ? (
+      {/* Plant / Failure State */}
+      {!strictModeFailed && !failStats && (
+          isRunning ? <FocusPlant timeLeft={timeLeft} totalDuration={safeDuration} /> 
+                    : <div className="text-6xl animate-bounce">🌱</div>
+      )}
+
+      {/* Failure Report Card */}
+      {failStats && (
+         <div className="text-center my-4 p-6 bg-red-50 rounded-xl border border-red-100 w-full max-w-sm animate-in zoom-in">
+            <div className="text-5xl mb-2">📉</div>
+            <h3 className="text-red-600 font-bold text-xl">Session Failed</h3>
+            <p className="text-gray-600 text-sm mb-4">You were offline too long!</p>
+            
+            <div className="w-full bg-gray-200 rounded-full h-4 mb-2 overflow-hidden">
+                <div 
+                    className="bg-red-500 h-full transition-all duration-1000" 
+                    style={{ width: `${Math.min(failStats.percentage, 100)}%` }}
+                ></div>
+            </div>
+            
+            <div className="flex justify-between text-xs font-bold text-gray-500 uppercase">
+                <span>You: {failStats.present}m</span>
+                <span>Req: {failStats.required}m</span>
+            </div>
+         </div>
+      )}
+
+      {strictModeFailed && (
         <div className="text-center my-8 animate-pulse">
             <div className="text-6xl">🥀</div>
             <p className="text-red-600 font-bold mt-2">Focus Broken!</p>
             <p className="text-xs text-red-400">You left the tab.</p>
         </div>
-      ) : (
-        isRunning && <FocusPlant timeLeft={timeLeft} totalDuration={25 * 60} />
       )}
 
-      {/* CONTROLS */}
-      <div className="mt-8 h-16">
-        {/* REJOIN */}
+      {/* Controls */}
+      <div className="mt-8 h-auto flex flex-col items-center gap-4">
+        
+        {/* Time Slider */}
+        {!isRunning && !sessionCompleted && !strictModeFailed && !failStats && (
+            <div className="flex flex-col items-center gap-2 mb-2">
+                <label className="text-xs font-bold text-gray-400 uppercase">Set Duration (Minutes)</label>
+                <div className="flex items-center gap-4">
+                    <input 
+                        type="range" min="1" max="60" 
+                        value={selectedTime} 
+                        onChange={(e) => setSelectedTime(parseInt(e.target.value))}
+                        className="w-48 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <span className="text-xl font-mono font-bold w-12 text-center text-blue-600">{selectedTime}</span>
+                </div>
+            </div>
+        )}
+
+        {/* Rejoin Button */}
         {strictModeFailed && (
             <button onClick={() => {
-                setStrictModeFailed(false); setSessionCompleted(false); setHasStarted(false); sendRejoin();
-            }} className="bg-red-500 hover:bg-red-600 text-white text-lg font-bold px-8 py-4 rounded-full shadow-lg transform hover:scale-105 transition">
+                setStrictModeFailed(false); setSessionCompleted(false); setHasStarted(false); sendRejoin(); 
+            }} className="bg-red-500 hover:bg-red-600 text-white font-bold px-8 py-3 rounded-full shadow-lg transform hover:scale-105 transition">
              Try Again (Rejoin)
             </button>
         )}
 
-        {/* START */}
-        {!isRunning && !strictModeFailed && !sessionCompleted && (
-             <button onClick={() => startTimer(25)} disabled={status !== "Connected"} 
-             className="bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold px-8 py-4 rounded-full shadow-lg transform hover:scale-105 transition">
-             Start Focus Session
+        {/* Start Button */}
+        {!isRunning && !strictModeFailed && !sessionCompleted && !failStats && (
+             <button 
+                onClick={() => startTimer(selectedTime)} 
+                disabled={status !== "Connected"} 
+                className="bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold px-8 py-4 rounded-full shadow-lg transform hover:scale-105 transition"
+             >
+             Start {selectedTime}m Session
+             </button>
+        )}
+        
+        {/* Dismiss Failure Button */}
+        {failStats && (
+             <button onClick={() => setFailStats(null)} className="text-gray-400 underline text-sm hover:text-gray-600">
+                Dismiss & Try Again
              </button>
         )}
 
-        {/* CLAIM */}
-        {!isRunning && sessionCompleted && !strictModeFailed && (
-            <button onClick={handleClaimReward} className="bg-green-500 text-white text-lg font-bold px-8 py-4 rounded-full shadow-lg animate-bounce flex items-center gap-2">
-                <span>🎉</span> Claim Reward!
+        {/* Claim Reward Button (Always Active if Done) */}
+        {!isRunning && sessionCompleted && !strictModeFailed && !failStats && (
+            <button onClick={handleClaimReward} className="bg-green-500 text-white text-lg font-bold px-8 py-4 rounded-full shadow-lg animate-bounce flex items-center gap-2 transform hover:scale-105 transition">
+                <span>🎁</span> Claim Reward!
             </button>
         )}
       </div>
     </div>
 
-    {/* --- SOUND PLAYER --- */}
     <SoundPlayer />
 
-    {/* CHAT SECTION */}
+    {/* Chat Section */}
     <div className="bg-white rounded-xl shadow-xl border-2 border-gray-100 overflow-hidden flex flex-col h-64">
       <div className="bg-gray-50 p-3 border-b border-gray-200 font-bold text-gray-600 text-sm flex justify-between">
         <span>💬 Room Chat</span>

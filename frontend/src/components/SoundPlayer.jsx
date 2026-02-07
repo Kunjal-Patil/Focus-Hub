@@ -72,7 +72,7 @@ const SoundPlayer = () => {
         )}
       </div>
       
-      {/* UPDATED: grid-cols-3 ensures the 3 buttons fit perfectly */}
+      {/* grid-cols-3*/}
       <div className="grid grid-cols-3 gap-2 mb-4">
         {TRACKS.map((track) => (
           <button
